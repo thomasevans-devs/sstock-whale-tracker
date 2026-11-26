@@ -3,8 +3,9 @@ name: SSTOCK Whale Tracker
 on:
   workflow_dispatch:
   schedule:
-    - cron: '55 1 * * 1-5'   
-    - cron: '55 5 * * 1-5'   
+    - cron: '55 1 * * 1-5'
+    - cron: '55 5 * * 1-5'
+
 jobs:
   track-whales:
     runs-on: ubuntu-latest
@@ -24,4 +25,5 @@ jobs:
       - name: Run Whale Bot
         env:
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          SSTOCK_COOKIE: ${{ secrets.SSTOCK_COOKIE }}
         run: python -u bot.py

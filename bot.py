@@ -9,19 +9,28 @@ import urllib.request
 import websockets
 
 BASE_HISTORY_URL = "https://api-feature.sstock.vn/api/v1/ta/orderbook-history"
-SYMBOLS_CANDIDATE_URLS = [
-    "https://api-feature.sstock.vn/api/v1/market/symbols",
-    "https://api-feature.sstock.vn/api/v1/ta/symbols",
-    "https://api-feature.sstock.vn/api/v1/stocks",
-]
 WS_URL = "wss://ws.sstock.vn/api/v1/ws"
+
+VN100_SYMBOLS = [
+    "ACB", "ANV", "BCM", "BID", "BMP", "BSI", "BVH", "BWE", "CII", "CMG",
+    "CTD", "CTG", "CTR", "CTS", "DBC", "DCM", "DGC", "DGW", "DIG", "DPM",
+    "DSE", "DXG", "DXS", "EIB", "EVF", "FPT", "FRT", "FTS", "GAS", "GEE",
+    "GEX", "GMD", "GVR", "HAG", "HCM", "HDB", "HDC", "HDG", "HHV", "HPG",
+    "HSG", "HT1", "IMP", "KBC", "KDC", "KDH", "KOS", "LPB", "MBB", "MCH",
+    "MBS", "MSB", "MSN", "MWG", "NAB", "NKG", "NLG", "NT2", "OCB", "PAN",
+    "PC1", "PDR", "PHR", "PLX", "PNJ", "POW", "PPC", "PTB", "PVD", "PVT",
+    "REE", "SAB", "SBT", "SCS", "SHB", "SIP", "SJS", "SSB", "SSI", "STB",
+    "SZC", "TCB", "TCH", "TLG", "TPB", "VCB", "VCG", "VCI", "VGC", "VHC",
+    "VHM", "VIB", "VIC", "VIX", "VJC", "VNM", "VPB", "VPI", "VPL", "VRE",
+    "VSC", "VTP",
+]
 
 APPS_SCRIPT_URL = os.environ.get("APPS_SCRIPT_URL", "").strip()
 SSTOCK_COOKIE = os.environ.get("SSTOCK_COOKIE", "").strip()
 
 MIN_VOLUME = 400_000
 FLUSH_INTERVAL = 3.0
-CONCURRENCY = 8  # Số mã quét song song mỗi vòng để không dội server
+CONCURRENCY = 8
 
 VN_TZ = datetime.timezone(datetime.timedelta(hours=7))
 
@@ -69,58 +78,6 @@ def post_to_apps_script(rows: list[list]) -> dict:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read().decode("utf-8"))
-
-
-def discover_symbols() -> list[str]:
-    symbols = set()
-    for url in SYMBOLS_CANDIDATE_URLS:
-        try:
-            payload = fetch_json(url)
-            items = payload if isinstance(payload, list) else payload.get("data") or payload.get("items") or []
-            for item in items:
-                if isinstance(item, str) and len(item.strip()) == 3 and item.strip().isalpha():
-                    symbols.add(item.strip().upper())
-                elif isinstance(item, dict):
-                    sym = str(item.get("symbol") or item.get("Symbol") or item.get("code") or "").strip().upper()
-                    if len(sym) == 3 and sym.isalpha():
-                        symbols.add(sym)
-            if len(symbols) >= 100:
-                print(f"[+] Lấy được {len(symbols)} mã cổ phiếu từ {url}")
-                return sorted(symbols)
-        except Exception:
-            continue
-
-    # Fallback: bắt mã từ WebSocket stream trong 5 giây nếu endpoint danh sách mã đổi đường dẫn
-    print("[*] Đang tự động thu thập danh sách mã từ luồng WebSocket (5s)...")
-    ws_headers = {
-        "Origin": "https://sstock.vn",
-        "User-Agent": build_headers()["user-agent"],
-        "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    }
-
-    async def _collect():
-        found = set()
-        try:
-            async with websockets.connect(WS_URL, additional_headers=ws_headers, open_timeout=8) as ws:
-                deadline = time.monotonic() + 5.0
-                while time.monotonic() < deadline:
-                    try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                        msg = json.loads(raw)
-                        sym = str(msg.get("identifier") or (msg.get("data") or {}).get("Symbol") or "").strip().upper()
-                        if len(sym) == 3 and sym.isalpha():
-                            found.add(sym)
-                    except (asyncio.TimeoutError, json.JSONDecodeError):
-                        continue
-        except Exception:
-            pass
-        return sorted(found)
-
-    symbols_list = asyncio.run(_collect())
-    print(f"[+] Thu thập được {len(symbols_list)} mã từ stream.")
-    return symbols_list
 
 
 def parse_single_orders(symbol: str, history_items: list) -> list[list]:
@@ -189,17 +146,13 @@ async def main():
         print("[!] Thiếu biến môi trường APPS_SCRIPT_URL.")
         sys.exit(1)
 
-    symbols = discover_symbols()
-    if not symbols:
-        print("[!] Không lấy được danh sách mã cổ phiếu.")
-        sys.exit(1)
-
+    symbols = sorted(set(VN100_SYMBOLS))
     seen_orders = set()
     row_buffer = []
     last_flush = time.monotonic()
     sem = asyncio.Semaphore(CONCURRENCY)
 
-    print(f"[+] Bắt đầu quét TỪNG LỆNH ĐƠN LẺ > {MIN_VOLUME:,} cp cho {len(symbols)} mã...")
+    print(f"[+] Bắt đầu quét TỪNG LỆNH ĐƠN LẺ > {MIN_VOLUME:,} cp cho {len(symbols)} mã VN100...")
 
     while not is_session_over():
         loop_start = time.monotonic()
